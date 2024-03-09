@@ -3,18 +3,12 @@ package pool
 import (
     "context"
     "github.com/stretchr/testify/assert"
-    "rhzx3519/unique-key-generator/persistence"
     "sync"
     "testing"
 )
 
 func TestPool_GenerateKey(t *testing.T) {
     t.Setenv("MONGODB_URI", "mongodb://127.0.0.1:27017/?retryWrites=false")
-    persistence.Init()
-    defer func() {
-        persistence.Reset()
-        persistence.Destruct()
-    }()
 
     pool := NewPool()
     ctx, cancel := context.WithCancel(context.TODO())
@@ -44,11 +38,6 @@ func TestPool_base64(t *testing.T) {
 
 func TestPool_Concurrent(t *testing.T) {
     t.Setenv("MONGODB_URI", "mongodb://127.0.0.1:27017/?retryWrites=false")
-    persistence.Init()
-    defer func() {
-        persistence.Reset()
-        persistence.Destruct()
-    }()
 
     pool := NewPool()
     ctx, cancel := context.WithCancel(context.TODO())
@@ -71,11 +60,6 @@ func TestPool_Concurrent(t *testing.T) {
 
 func TestPool_IsExist(t *testing.T) {
     t.Setenv("MONGODB_URI", "mongodb://127.0.0.1:27017/?retryWrites=false")
-    persistence.Init()
-    defer func() {
-        persistence.Reset()
-        persistence.Destruct()
-    }()
 
     pool := NewPool()
     ctx, cancel := context.WithCancel(context.TODO())

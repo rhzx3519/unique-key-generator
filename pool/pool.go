@@ -3,7 +3,7 @@ package pool
 import (
     "context"
     "fmt"
-    "rhzx3519/unique-key-generator/persistence"
+    "rhzx3519/unique-key-generator/sequencer"
     "slices"
 )
 
@@ -33,22 +33,30 @@ type IsExistParam struct {
 type Pool struct {
     cache         []string
     currentSeq    int64
+    sequencer     sequencer.Sequencer
     keyStream     chan string
     isExistStream chan IsExistParam
 }
 
 func NewPool() *Pool {
+    seq, _ := sequencer.NewMongoSequencer()
     return &Pool{
         keyStream:     make(chan string),
         isExistStream: make(chan IsExistParam),
+        sequencer:     seq,
     }
+}
+
+func (p *Pool) close() {
+    close(p.keyStream)
+    close(p.isExistStream)
+    p.sequencer.Reset()
 }
 
 func (p *Pool) Run(ctx context.Context) {
     go func() {
         defer fmt.Println("Pool closure exited.")
-        defer close(p.keyStream)
-        defer close(p.isExistStream)
+        defer p.close()
         for {
             select {
             case p.keyStream <- p.generate():
@@ -82,11 +90,11 @@ func (p *Pool) generate() string {
         return r
     }
     // generate new keys and add them into cache
-    seq, _ := persistence.Current()
+    seq, _ := p.sequencer.Current()
     for i := 0; i < SEQ_SPAN; i++ {
         p.cache = append(p.cache, base64Encode(seq+int64(i)))
     }
-    err := persistence.Save(seq + SEQ_SPAN)
+    err := p.sequencer.Save(seq + SEQ_SPAN)
     if err != nil {
         panic(err)
     }
