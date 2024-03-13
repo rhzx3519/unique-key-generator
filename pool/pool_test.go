@@ -1,83 +1,70 @@
 package pool
 
 import (
-    "context"
-    "github.com/stretchr/testify/assert"
-    "sync"
-    "testing"
+	"context"
+	"github.com/stretchr/testify/assert"
+	"sync"
+	"testing"
+	"time"
 )
 
-func TestPool_GenerateKey(t *testing.T) {
-    t.Setenv("MONGODB_URI", "mongodb://127.0.0.1:27017/?retryWrites=false")
+func TestPool_Run(t *testing.T) {
+	t.Setenv("MONGODB_URI", "mongodb://127.0.0.1:27017/?retryWrites=false")
+	pool := NewPool()
+	ctx, cancel := context.WithCancel(context.TODO())
+	defer cancel()
+	pool.Run(ctx)
 
-    pool := NewPool()
-    ctx, cancel := context.WithCancel(context.TODO())
-    defer cancel()
+	// 1
+	key := pool.Key()
+	pool.Existed(key)
+	assert.Equal(t, OneTimeGeneratedNumber-1, len(pool.cache))
+	assert.Equal(t, int64(1), pool.produced)
 
-    pool.Run(ctx)
-    for i := 0; i < 64*64; i++ {
-        assert.Equal(t, base64Encode(int64(i)), pool.Key())
-    }
-}
+	// 100
+	for i := 0; i < OneTimeGeneratedNumber-1; i++ {
+		pool.Key()
+	}
+	assert.Equal(t, 0, len(pool.cache))
+	assert.Equal(t, int64(100), pool.produced)
+	// 101
+	pool.Key()
+	assert.Equal(t, int64(101), pool.produced)
 
-func TestPool_base64(t *testing.T) {
-    assert.Equal(t, "a", base64Encode(0))
-    assert.Equal(t, "b", base64Encode(1))
-    assert.Equal(t, "-", base64Encode(63))
-    assert.Equal(t, "ba", base64Encode(64))
-    assert.Equal(t, "baaa", base64Encode(64*64*64))
-    assert.Equal(t, "---", base64Encode(64*64*64-1))
-
-    assert.Equal(t, int64(0), base64Decode("a"))
-    assert.Equal(t, int64(1), base64Decode("b"))
-    assert.Equal(t, int64(63), base64Decode("-"))
-    assert.Equal(t, int64(64), base64Decode("ba"))
-    assert.Equal(t, int64(64*64*64), base64Decode("baaa"))
-    assert.Equal(t, int64(64*64*64-1), base64Decode("---"))
+	assert.Equal(t, OneTimeGeneratedNumber-1, len(pool.cache))
 }
 
 func TestPool_Concurrent(t *testing.T) {
-    t.Setenv("MONGODB_URI", "mongodb://127.0.0.1:27017/?retryWrites=false")
+	t.Setenv("MONGODB_URI", "mongodb://127.0.0.1:27017/?retryWrites=false")
 
-    pool := NewPool()
-    ctx, cancel := context.WithCancel(context.TODO())
-    defer cancel()
+	pool := NewPool()
+	ctx, cancel := context.WithCancel(context.TODO())
+	defer cancel()
 
-    pool.Run(ctx)
+	pool.Run(ctx)
 
-    var wg sync.WaitGroup
-    const N = 64*64 + 33
-    for i := 0; i < N; i++ {
-        wg.Add(1)
-        go func(i int) {
-            defer wg.Done()
-            pool.Key()
-        }(i)
-    }
-    wg.Wait()
-    assert.Equal(t, base64Encode(int64(N)), pool.Key())
-}
+	var wg sync.WaitGroup
+	const N = 150
+	var lock sync.Mutex
+	var cache = make(map[string]bool)
+	for i := 0; i < N; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			defer lock.Unlock()
+			lock.Lock()
+			cache[pool.Key()] = true
+		}(i)
+	}
+	wg.Wait()
+	assert.Equal(t, int64(N), pool.produced)
+	pool.Key()
+	assert.Equal(t, int64(N+1), pool.produced)
 
-func TestPool_IsExist(t *testing.T) {
-    t.Setenv("MONGODB_URI", "mongodb://127.0.0.1:27017/?retryWrites=false")
+	assert.Equal(t, N, len(cache))
+	for key := range cache {
+		assert.True(t, pool.Existed(key))
+	}
 
-    pool := NewPool()
-    ctx, cancel := context.WithCancel(context.TODO())
-    defer cancel()
-
-    pool.Run(ctx)
-
-    var wg sync.WaitGroup
-    const N = 64 * 64
-    for i := 0; i < N; i++ {
-        wg.Add(1)
-        go func(i int) {
-            defer wg.Done()
-            pool.Key()
-        }(i)
-    }
-    wg.Wait()
-
-    assert.True(t, pool.IsExist(base64Encode(64*64)))
-    assert.False(t, pool.IsExist(base64Encode(64*64+100)))
+	time.Sleep(time.Second)
 }

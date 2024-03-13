@@ -86,7 +86,8 @@ func (s *MongoSequencer) Reset() error {
 }
 
 type MemorySequencer struct {
-	seq int64
+	seq  int64
+	used map[string]bool
 }
 
 func NewMemorySequencer() (*MemorySequencer, error) {
@@ -106,3 +107,4 @@ func (s *MemorySequencer) Reset() error {
 	s.seq = 0
 	return nil
 }
+

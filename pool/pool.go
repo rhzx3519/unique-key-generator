@@ -3,91 +3,107 @@ package pool
 import (
 	"context"
 	"fmt"
-	"rhzx3519/unique-key-generator/sequencer"
+	"log"
+	"rhzx3519/unique-key-generator/generator"
+	"time"
 )
 
-const SEQ_SPAN = 100
+const OneTimeGeneratedNumber = 100
 
 type IsExistParam struct {
 	key     string
 	existed chan bool
 }
 
+type GetKeyParam struct {
+	key chan string
+}
+
 type Pool struct {
 	cache         []string
+	produced      int64
 	currentSeq    int64
-	sequencer     sequencer.Sequencer
-	keyStream     chan string
-	isExistStream chan IsExistParam
+	generator     generator.Generator
+	keyStream     chan *GetKeyParam
+	existedStream chan IsExistParam
 }
 
 func NewPool() *Pool {
-	seq, _ := sequencer.NewSequencer(sequencer.Option{IsMemory: false})
+	g, _ := generator.NewGenerator(false)
 	return &Pool{
-		keyStream:     make(chan string),
-		isExistStream: make(chan IsExistParam),
-		sequencer:     seq,
+		keyStream:     make(chan *GetKeyParam),
+		existedStream: make(chan IsExistParam),
+		generator:     g,
 	}
 }
 
 func (p *Pool) close() {
 	close(p.keyStream)
-	close(p.isExistStream)
-	p.sequencer.Reset()
+	close(p.existedStream)
 }
 
 func (p *Pool) Run(ctx context.Context) {
+	ticker := time.NewTicker(time.Minute * 30)
 	go func() {
 		defer fmt.Println("Pool closure exited.")
+		defer ticker.Stop()
 		defer p.close()
+
 		for {
 			select {
-			case p.keyStream <- p.generate():
-			case param := <-p.isExistStream:
-				param.existed <- p.checkExist(param.key)
 			case <-ctx.Done():
 				return
+			case param := <-p.existedStream:
+				param.existed <- p.checkExist(param.key)
+			case <-ticker.C:
+				p.doGenerate()
+			case param := <-p.keyStream:
+				param.key <- p.get()
 			}
 		}
 	}()
 }
 
 func (p *Pool) Key() string {
-	return <-p.keyStream
+	param := &GetKeyParam{
+		key: make(chan string),
+	}
+	p.keyStream <- param
+	return <-param.key
 }
 
-func (p *Pool) IsExist(key string) bool {
+func (p *Pool) Existed(key string) bool {
 	param := IsExistParam{
 		key:     key,
 		existed: make(chan bool),
 	}
 	defer close(param.existed)
-	p.isExistStream <- param
+
+	p.existedStream <- param
 	return <-param.existed
 }
 
-func (p *Pool) generate() string {
-	if len(p.cache) != 0 {
-		r := p.cache[0]
-		p.cache = p.cache[1:]
-		return r
+func (p *Pool) get() string {
+	p.produced++
+	if len(p.cache) == 0 {
+		p.doGenerate()
 	}
-	// generate new keys and add them into cache
-	seq, _ := p.sequencer.Current()
-	for i := 0; i < SEQ_SPAN; i++ {
-		p.cache = append(p.cache, base64Encode(seq+int64(i)))
-	}
-	err := p.sequencer.Save(seq + SEQ_SPAN)
-	if err != nil {
-		panic(err)
-	}
-	p.currentSeq = seq + SEQ_SPAN
-
 	r := p.cache[0]
 	p.cache = p.cache[1:]
 	return r
 }
 
 func (p *Pool) checkExist(key string) bool {
-	return base64Decode(key) < p.currentSeq
+	return p.generator.Existed(key)
+}
+
+func (p *Pool) doGenerate() {
+	fmt.Println("doGenerate...")
+	for i, leftInCache := 0, len(p.cache); i < OneTimeGeneratedNumber-leftInCache; i++ {
+		key, err := p.generator.Generate()
+		if err != nil {
+			log.Fatalln(err)
+		}
+		p.cache = append(p.cache, key)
+	}
 }
